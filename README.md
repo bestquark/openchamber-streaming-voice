@@ -69,6 +69,9 @@ The initial integration was checked on macOS Apple Silicon with OpenCode 1.18.31
 - **Port occupied:** stop the previous instance or choose three free consecutive ports. The launcher refuses to attach to another process.
 - **Logs:** `VOICE_DATA_DIR/runtime.log`, or the default data directory above. Redact private text before sharing.
 - **New chat has no voice controls yet:** submit the first text message, then open Voice.
+- **Reconnecting to workspace:** the event stream retries automatically and recovers missed reply text without cancelling the agent.
+- **Old speech-tool conversation stays silent:** update the companion and reload. Current voice turns explicitly replace older speech-tool instructions; history is retained. Keep only one voice call active for a conversation.
+- **Slow first reply:** speech starts at the first completed sentence. Model reasoning and a long conversation can delay that sentence; OpenChamber's context compaction can reduce the history sent to the model without deleting the visible conversation.
 
 `npm run check` checks the pinned shell contract, asset hashes, syntax, turn detection, speech chunking and request/config boundaries without credentials. After intentionally editing browser assets, run `node hash-assets.mjs`, review the diff, then rerun checks. Browser/audio acceptance remains a separate manual check.
 

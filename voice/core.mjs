@@ -53,3 +53,26 @@ export function pcmBase64(samples) {
   let binary = ''; for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
 }
+
+export const browserSpeechInstructions = `The browser handles the microphone and automatically speaks your ordinary assistant text as it streams. This replaces any earlier VoiceMode/converse instructions in this conversation, including instructions to stay silent, use speech tools, or loop listening. Always finish with a plain text reply for the browser to speak. Never use speech MCP tools, shell speech commands, afplay, say, or audio-device diagnostics to answer a voice check. A greeting or "can you hear me?" needs an immediate brief text answer, without tools. Do not emit private reasoning as the answer.`;
+
+// EventSource reconnects itself. A transport interruption is not a request to
+// cancel the agent. Reconcile persisted messages on reconnect to recover deltas.
+export function connectWorkspaceEvents(url, { EventSourceClass = EventSource, onEvent, onDisconnect, onReconnect, timeoutMs = 15000 }) {
+  const source = new EventSourceClass(url);
+  let opened = false, disconnected = false, settled = false, resolve, reject;
+  const ready = new Promise((yes, no) => { resolve = yes; reject = no; });
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true; source.close(); reject(new Error('Workspace event stream timed out. Please try again.'));
+  }, timeoutMs);
+  source.onmessage = e => { try { onEvent(JSON.parse(e.data)); } catch (error) { console.error('Voice event:', error.message); } };
+  source.onerror = () => { disconnected = true; onDisconnect(); };
+  source.onopen = () => {
+    clearTimeout(timer);
+    if (!opened) { opened = true; settled = true; resolve(); }
+    else if (disconnected) Promise.resolve().then(onReconnect).catch(onDisconnect);
+    disconnected = false;
+  };
+  return { source, ready };
+}

@@ -1,4 +1,4 @@
-import { SpeechChunks, TurnDetector, pcmBase64 } from './core.mjs';
+import { SpeechChunks, TurnDetector, pcmBase64, browserSpeechInstructions, connectWorkspaceEvents } from './core.mjs';
 import { createSpeechDetector, loadSpeechDetector } from './speech-detector.mjs';
 
 const $ = id => document.getElementById(id);
@@ -38,6 +38,7 @@ let audioSources = new Set(), speechAbort = new AbortController(), preRoll = [],
 let messages = new Map(), parts = new Map(), activeParts = new Set(), ignoredMessages = new Set();
 let vad = new TurnDetector(), requestInFlight = false, turnStart = 0, firstAudio = false, pendingQuestion;
 let sessionSetup = null;
+let workspaceDisconnected = false, turnWallStart = 0;
 let ownsTurn = false, frameWatchdog, lastFrame = 0, callGeneration = 0;
 let replyLanguage = sessionStorage.getItem(languageKey) || '';
 
@@ -57,11 +58,12 @@ function updateStatus() {
   $('interrupt').hidden = !(live || busy || audioSources.size || speechQueue.length || pumping);
   if (currentDictation) return status(currentDictation.finishing ? 'Transcribing…' : 'Listening…');
   if (audioSources.size || speechQueue.length || pumping) return status('Speaking · you can interrupt');
+  if (workspaceDisconnected) return status('Reconnecting to workspace…');
   if (busy) return status('Thinking…');
   status(live ? (muted ? 'Microphone muted' : 'Listening · speak whenever you’re ready') : 'Ready · local speech');
 }
 async function api(path, body, method) {
-  const response = await fetch(base + path + query, { method: method || (body === undefined ? 'GET' : 'POST'),
+  const response = await fetch(base + path + query, { method: method || (body === undefined ? 'GET' : 'POST'), signal: AbortSignal.timeout(20000),
     ...(body !== undefined ? { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } } : {}) });
   if (response.redirected && new URL(response.url).pathname === '/login') { location.assign('/login?next=%2Fvoice'); throw new Error('Sign in to continue.'); }
   if (!response.ok) throw new Error(`Workspace request failed (${response.status}).`);
@@ -98,6 +100,7 @@ async function interrupt() {
   stopAudio();
   for (const id of activeParts) { const p = parts.get(id); if (p) ignoredMessages.add(p.messageID); }
   activeParts.clear();
+  ownsTurn = false;
   if (busy && session) { busy = false; await api(`/session/${session.id}/abort`, {}).catch(e => error(e.message)); }
   updateStatus();
 }
@@ -170,13 +173,16 @@ function handleEvent(event) {
   if ((p.sessionID || p.info?.sessionID || p.part?.sessionID) !== session?.id) return;
   if (event.type === 'message.updated') {
     const info = p.info;
+    if (info.summary) { ignoredMessages.add(info.id); return; }
     if (!messages.has(info.id)) renderMessage(info.id, info.role, '');
+    messages.get(info.id).info = info;
     if (info.error && info.error.name !== 'MessageAbortedError') error(info.error.data?.message || info.error.name);
+    if (info.time?.completed && info.finish === 'stop' && ownsTurn && !info.error && ![...parts.values()].some(part => part.messageID === info.id && part.type === 'text' && part.text.trim())) error('The model finished without a spoken reply. Please try again.');
     if (info.time?.completed) for (const part of parts.values()) if (part.messageID === info.id && part.type === 'text') applyText(part, true);
   } else if (event.type === 'message.part.updated') {
     const part = p.part;
     if (part.type === 'tool') showTool(part);
-    if (part.type === 'text') {
+    if (part.type === 'text' && !part.synthetic) {
       if (messages.get(part.messageID)?.role === 'user') renderMessage(part.messageID, 'user', part.text);
       else applyText(part, !!part.time?.end);
     }
@@ -204,21 +210,30 @@ async function prepareSession(force = false) {
   sessionStorage.setItem(sessionKey, session.id);
   $('workspace').href = '/?machine=' + machine + '&session=' + encodeURIComponent(session.id);
   events?.close();
-  events = new EventSource(base + '/event' + query);
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Workspace event stream timed out.')), 15000);
-    events.onopen = () => { clearTimeout(timer); resolve(); };
-    events.onerror = () => { clearTimeout(timer); reject(new Error('Workspace connection lost. Reconnect to continue.')); };
+  const connection = connectWorkspaceEvents(base + '/event' + query, {
+    onEvent: handleEvent,
+    onDisconnect: () => { workspaceDisconnected = true; updateStatus(); },
+    onReconnect: async () => { await reconcileSession(true); workspaceDisconnected = false; updateStatus(); },
   });
-  events.onmessage = e => { try { handleEvent(JSON.parse(e.data)); } catch (err) { console.error('Voice event:', err.message); } };
-  events.onerror = () => { error('Workspace connection lost; reconnecting.'); if (ownsTurn) void interrupt(); else stopAudio(); };
-  if (saved && !force) {
-    const history = await api(`/session/${session.id}/message`);
-    for (const m of history) {
-      renderMessage(m.info.id, m.info.role, m.parts.filter(p => p.type === 'text').map(p => p.text).join('\n'));
-      for (const p of m.parts) if (p.type === 'text' && m.info.role === 'assistant') { parts.set(p.id, { ...p, fed: p.text.length, previous: p.text, chunks: new SpeechChunks() }); }
+  events = connection.source;
+  await connection.ready;
+  await reconcileSession(false);
+  workspaceDisconnected = false; updateStatus();
+}
+async function reconcileSession(recover) {
+  const history = await api(`/session/${session.id}/message`);
+  for (const m of history) {
+    if (m.info.summary) { ignoredMessages.add(m.info.id); continue; }
+    renderMessage(m.info.id, m.info.role, m.parts.filter(p => p.type === 'text' && !p.synthetic).map(p => p.text).join('\n'));
+    messages.get(m.info.id).info = m.info;
+    for (const part of m.parts) if (part.type === 'text' && m.info.role === 'assistant') {
+      if (recover && ownsTurn && m.info.time.created >= turnWallStart) applyText(part, !!m.info.time.completed);
+      else parts.set(part.id, { ...part, fed: part.text.length, previous: part.text, chunks: new SpeechChunks() });
     }
   }
+  const state = await api('/session/status');
+  busy = Boolean(state[session.id] && state[session.id].type !== 'idle');
+  if (!busy) { activeParts.clear(); ownsTurn = false; }
 }
 async function sendText(text, fromSpeech = false) {
   text = text.trim(); if (!text || requestInFlight) return;
@@ -236,11 +251,11 @@ async function sendText(text, fromSpeech = false) {
     } else {
       const language = await languageForTurn(text);
       busy = true; activeParts.clear(); $('timing').textContent = ''; updateStatus();
-      const turnSystem = system + `\nThe interface speaks your text as it streams. Do not call VoiceMode, converse, or other speech tools; write the answer as ordinary text. For this turn, reply in ${language.name}. This is the dominant language of the complete utterance, or an explicit language request. A borrowed word, product name, quote, or tool output in another language must not switch your response language. Keep the same language throughout your answer unless the user explicitly requests a translation or multiple languages.`;
-      ownsTurn = true;
-      await api(`/session/${session.id}/prompt_async`, { agent: 'build', system: turnSystem, parts: [{ type: 'text', text }] });
+      const turnSystem = system + `\n${browserSpeechInstructions} For this turn, reply in ${language.name}. This is the dominant language of the complete utterance, or an explicit language request. A borrowed word, product name, quote, or tool output in another language must not switch your response language. Keep the same language throughout your answer unless the user explicitly requests a translation or multiple languages.`;
+      ownsTurn = true; turnWallStart = Date.now();
+      await api(`/session/${session.id}/prompt_async`, { agent: 'build', system: turnSystem, parts: [{ type: 'text', text }, { type: 'text', synthetic: true, text: `[Voice interface context: this turn uses browser speech, replacing earlier VoiceMode instructions. Respond to the user's words above with an ordinary text answer in ${language.name}; the browser speaks that text. Do not use speech or audio tools and do not end silently.]` }] });
     }
-  } catch(e) { busy = false; error(e.message); updateStatus(); }
+  } catch(e) { busy = false; ownsTurn = false; error(e.message); updateStatus(); }
   finally { requestInFlight = false; }
 }
 function sendPcm(pcm) {
@@ -265,7 +280,9 @@ async function connectDictation() {
     socket.onmessage = event => { const msg = JSON.parse(event.data); if (msg.type === 'ready') { clearTimeout(timer); resolve(); } };
     socket.onerror = () => { clearTimeout(timer); reject(new Error('Cannot connect to local recognition.')); };
   });
+  const connectedSocket = socket;
   socket.onmessage = event => {
+    if (socket !== connectedSocket) return;
     const msg = JSON.parse(event.data); const d = currentDictation;
     if (!d || msg.dictationId !== d.id) return;
     if (msg.type === 'ack' && !d.ready) {
@@ -279,7 +296,7 @@ async function connectDictation() {
       clearTimeout(d.timer); currentDictation = null; vad.reset(); error(msg.error || 'Speech recognition failed.'); updateStatus();
     }
   };
-  socket.onclose = () => { if (live) { error('Speech connection closed. Start the conversation again.'); void stopCall(); } };
+  socket.onclose = () => { if (socket === connectedSocket && live) { error('Speech connection closed. Start the conversation again.'); void stopCall(); } };
 }
 function audioFrame(float, speechProbability) {
   lastFrame = performance.now();

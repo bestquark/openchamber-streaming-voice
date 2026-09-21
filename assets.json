@@ -1,10 +1,10 @@
 {
   "fleet.css": "76b7a3b58f466b719b17b8b702a2510e67225be92bf9618c7999f30d41b20ebc",
   "fleet.js": "98518bc66eace0e98941364d43db75b2fb1af86b23585c933bb5a8867ade6d83",
-  "voice/app.mjs": "ad4b53fb0855f4ffd13eb1d9b6f1d60e93108c8dad2ea402c50d8dbc33585845",
+  "voice/app.mjs": "51361eaf43f0dabcde06721a1f81bd108a099cb12188226c9faaa4d6cbbf23da",
   "voice/capture.js": "49cf5f22df40b23f0a4e301451f5c6bc33d611f52b6edb6a6406bee9fca3f797",
-  "voice/core.mjs": "c6cf6fe59bfdaece60c315818689da347200b00b76570e0ac795cd146d310636",
-  "voice/core.test.mjs": "98b13997701fbf18cc592492c6f2de00939b4e3657a112e7966e8df63ea1894e",
+  "voice/core.mjs": "8f2dc75135da7eff3cdd765d39c5129f7c074170295ea84c9fa974a86ea21bc1",
+  "voice/core.test.mjs": "1dc78f481845a5fde20dac5c4c13f78daca6cc6a40ecc64091d0104587b445c4",
   "voice/index.html": "58e21db42841cfe09c618c0bbe91ef95cd9f4a5021d23f4fa5153b4fc888625b",
   "voice/speech-detector.mjs": "fe590d0494884f36d727498a8494be23aeeefcaca442553f2fb9a360dd3d90a6",
   "voice/style.css": "d0786607b86ee29c26c45c2f29f4ac4207eda34245fba4327d567052b63faec8",

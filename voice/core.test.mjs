@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SpeechChunks, TurnDetector } from './core.mjs';
+import { SpeechChunks, TurnDetector, connectWorkspaceEvents } from './core.mjs';
 test('speech begins at a sentence boundary before final text is available', () => {
   const s = new SpeechChunks();
   assert.deepEqual(s.push('The services are '), []);
@@ -51,4 +51,39 @@ test('invalid probabilities do not start a turn and muting clears accumulated on
   assert.equal(v.step(.98, 320, true), null);
   assert.equal(v.step(.98, 32, true, false), null);
   assert.equal(v.step(.98, 100, true), null);
+});
+
+class FakeEvents {
+  constructor() { this.closed = false; }
+  close() { this.closed = true; }
+  emit(value) { this.onmessage({ data: JSON.stringify(value) }); }
+}
+test('a dropped workspace stream stays open and recovers only the missing speech', async () => {
+  const chunks = new SpeechChunks(); let text = '', spoken = [], disconnects = 0, reconciliations = 0;
+  const receive = full => { spoken.push(...chunks.push(full.slice(text.length))); text = full; };
+  const connection = connectWorkspaceEvents('/event', {
+    EventSourceClass: FakeEvents,
+    onEvent: event => receive(event.text),
+    onDisconnect: () => disconnects++,
+    onReconnect: () => { reconciliations++; receive('First sentence. Second sentence.'); },
+  });
+  connection.source.onopen(); await connection.ready;
+  connection.source.emit({ text: 'First sentence. Sec' });
+  connection.source.onerror();
+  assert.equal(connection.source.closed, false);
+  connection.source.onopen(); await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(spoken, ['First sentence.', 'Second sentence.']);
+  assert.equal(disconnects, 1); assert.equal(reconciliations, 1);
+  connection.source.onopen(); await Promise.resolve();
+  assert.equal(reconciliations, 1);
+});
+test('initial transient connection failure can recover without leaving a dead stream', async () => {
+  const connection = connectWorkspaceEvents('/event', { EventSourceClass: FakeEvents, onEvent() {}, onDisconnect() {}, onReconnect() {} });
+  connection.source.onerror(); connection.source.onopen(); await connection.ready;
+  assert.equal(connection.source.closed, false);
+});
+test('an unreachable workspace closes its event stream after the startup deadline', async () => {
+  const connection = connectWorkspaceEvents('/event', { EventSourceClass: FakeEvents, onEvent() {}, onDisconnect() {}, onReconnect() {}, timeoutMs: 10 });
+  await assert.rejects(connection.ready, /timed out/);
+  assert.equal(connection.source.closed, true);
 });
