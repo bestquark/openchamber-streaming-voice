@@ -1,0 +1,16 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import assert from 'node:assert/strict';
+const here=path.dirname(fileURLToPath(import.meta.url));
+const manifest=JSON.parse(fs.readFileSync(path.join(here,'assets.json'),'utf8'));
+for(const [name,hash] of Object.entries(manifest))assert.equal(createHash('sha256').update(fs.readFileSync(path.join(here,name))).digest('hex'),hash,'Changed asset: '+name);
+const packageFile=path.join(here,'node_modules/@openchamber/web/package.json');
+assert.equal(JSON.parse(fs.readFileSync(packageFile,'utf8')).version,'1.24.2','Review compatibility before upgrading OpenChamber');
+const html=fs.readFileSync(path.join(here,'node_modules/@openchamber/web/dist/index.html'),'utf8');
+assert(html.includes('<head>') && /id=["']root["']/.test(html),'OpenChamber shell contract changed');
+for(const file of ['start.mjs','config.mjs','fleet.js','voice/app.mjs','voice/speech-detector.mjs'])execFileSync(process.execPath,['--check',path.join(here,file)]);
+execFileSync(process.execPath,['--test',path.join(here,'security.test.mjs'),path.join(here,'voice/core.test.mjs')],{stdio:'inherit'});
+console.log('Compatibility, asset integrity and security checks passed.');

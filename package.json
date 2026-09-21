@@ -1,0 +1,18 @@
+{
+  "name": "openchamber-streaming-voice",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node start.mjs",
+    "check": "node check.mjs",
+    "test": "node --test security.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@openchamber/web": "1.24.2",
+    "jsonc-parser": "3.3.1"
+  }
+}
