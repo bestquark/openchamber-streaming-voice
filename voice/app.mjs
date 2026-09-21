@@ -1,4 +1,4 @@
-import { SpeechChunks, TurnDetector, pcmBase64, browserSpeechInstructions, connectWorkspaceEvents } from './core.mjs';
+import { SpeechChunks, TurnDetector, pcmBase64, browserSpeechInstructions, connectWorkspaceEvents, isCompactionReply } from './core.mjs';
 import { createSpeechDetector, loadSpeechDetector } from './speech-detector.mjs';
 
 const $ = id => document.getElementById(id);
@@ -173,7 +173,7 @@ function handleEvent(event) {
   if ((p.sessionID || p.info?.sessionID || p.part?.sessionID) !== session?.id) return;
   if (event.type === 'message.updated') {
     const info = p.info;
-    if (info.summary) { ignoredMessages.add(info.id); return; }
+    if (isCompactionReply(info)) { ignoredMessages.add(info.id); return; }
     if (!messages.has(info.id)) renderMessage(info.id, info.role, '');
     messages.get(info.id).info = info;
     if (info.error && info.error.name !== 'MessageAbortedError') error(info.error.data?.message || info.error.name);
@@ -223,7 +223,7 @@ async function prepareSession(force = false) {
 async function reconcileSession(recover) {
   const history = await api(`/session/${session.id}/message`);
   for (const m of history) {
-    if (m.info.summary) { ignoredMessages.add(m.info.id); continue; }
+    if (isCompactionReply(m.info)) { ignoredMessages.add(m.info.id); continue; }
     renderMessage(m.info.id, m.info.role, m.parts.filter(p => p.type === 'text' && !p.synthetic).map(p => p.text).join('\n'));
     messages.get(m.info.id).info = m.info;
     for (const part of m.parts) if (part.type === 'text' && m.info.role === 'assistant') {

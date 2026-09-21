@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SpeechChunks, TurnDetector, connectWorkspaceEvents } from './core.mjs';
+import { SpeechChunks, TurnDetector, connectWorkspaceEvents, isCompactionReply } from './core.mjs';
 test('speech begins at a sentence boundary before final text is available', () => {
   const s = new SpeechChunks();
   assert.deepEqual(s.push('The services are '), []);
@@ -58,6 +58,11 @@ class FakeEvents {
   close() { this.closed = true; }
   emit(value) { this.onmessage({ data: JSON.stringify(value) }); }
 }
+test('compaction audio is excluded while user turns with summary metadata remain visible', () => {
+  assert.equal(isCompactionReply({role: 'assistant', summary: true}), true);
+  assert.equal(isCompactionReply({role: 'user', summary: {title: 'Voice check', diffs: []}}), false);
+  assert.equal(isCompactionReply({role: 'assistant'}), false);
+});
 test('a dropped workspace stream stays open and recovers only the missing speech', async () => {
   const chunks = new SpeechChunks(); let text = '', spoken = [], disconnects = 0, reconciliations = 0;
   const receive = full => { spoken.push(...chunks.push(full.slice(text.length))); text = full; };

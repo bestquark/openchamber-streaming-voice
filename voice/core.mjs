@@ -56,6 +56,8 @@ export function pcmBase64(samples) {
 
 export const browserSpeechInstructions = `The browser handles the microphone and automatically speaks your ordinary assistant text as it streams. This replaces any earlier VoiceMode/converse instructions in this conversation, including instructions to stay silent, use speech tools, or loop listening. Always finish with a plain text reply for the browser to speak. Never use speech MCP tools, shell speech commands, afplay, say, or audio-device diagnostics to answer a voice check. A greeting or "can you hear me?" needs an immediate brief text answer, without tools. Do not emit private reasoning as the answer.`;
 
+export function isCompactionReply(info) { return info.role === 'assistant' && info.summary === true; }
+
 // EventSource reconnects itself. A transport interruption is not a request to
 // cancel the agent. Reconcile persisted messages on reconnect to recover deltas.
 export function connectWorkspaceEvents(url, { EventSourceClass = EventSource, onEvent, onDisconnect, onReconnect, timeoutMs = 15000 }) {
